@@ -30,6 +30,24 @@ const FALLBACK_CHANNEL_ID = process.env.FALLBACK_CHANNEL_ID || null;
 // Members who already have this role are skipped entirely (no re-check, no re-DM).
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID || null;
 
+const VERIFIED_EMOJI = '✅';
+const NEEDS_FOLLOWUP_EMOJI = '⚠️';
+const NICKNAME_MAX_LENGTH = 32; // Discord's hard limit
+
+// Appends a status emoji to a member's current display name, replacing any
+// previous status emoji this bot added so they don't stack on repeat checks.
+function withStatusEmoji(currentName, emoji) {
+  const stripped = currentName
+    .replace(new RegExp(`\\s*${VERIFIED_EMOJI}\\s*$`), '')
+    .replace(new RegExp(`\\s*${NEEDS_FOLLOWUP_EMOJI}\\s*$`), '')
+    .trim();
+
+  const combined = `${stripped} ${emoji}`;
+  return combined.length > NICKNAME_MAX_LENGTH
+    ? `${stripped.slice(0, NICKNAME_MAX_LENGTH - emoji.length - 1)} ${emoji}`
+    : combined;
+}
+
 function buildGuidanceMessage(member) {
   return (
     `Hey ${member}! 👋 Welcome to the server.\n\n` +
@@ -38,7 +56,7 @@ function buildGuidanceMessage(member) {
     `match your Test IO profile name.\n\n` +
     `If you're new to Test IO, you can sign up here: https://tester.test.io\n\n` +
     `If you already have a profile, feel free to update your Discord nickname to match it, ` +
-    `or just let @celine_tlgs or @sablina know and they'll sort it out.`
+    `or just let a team member know and we'll sort it out.`
   );
 }
 
@@ -79,10 +97,25 @@ client.on('guildMemberAdd', async (member) => {
         }
       }
 
+      try {
+        await member.setNickname(withStatusEmoji(name, VERIFIED_EMOJI), 'Test IO profile verified');
+      } catch (nickErr) {
+        // Common causes: missing Manage Nicknames permission, or the target's
+        // top role is equal to/above the bot's — Discord blocks that regardless
+        // of permissions (also always true for the server owner).
+        console.warn(`[join-check] Could not set nickname for ${name}:`, nickErr.message);
+      }
+
       return;
     }
 
     console.log(`[join-check] ${name} → no profile found, sending guidance.`);
+
+    try {
+      await member.setNickname(withStatusEmoji(name, NEEDS_FOLLOWUP_EMOJI), 'Test IO profile not found — flagged for follow-up');
+    } catch (nickErr) {
+      console.warn(`[join-check] Could not set nickname for ${name}:`, nickErr.message);
+    }
 
     try {
       await member.send(buildGuidanceMessage(member));
@@ -110,7 +143,7 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isChatInputCommand() && interaction.commandName === 'checkprofiles') {
     const modal = new ModalBuilder()
       .setCustomId('tio-batch-modal')
-      .setTitle('Test IO Lookup');
+      .setTitle('Test IO Batch Lookup');
 
     const namesInput = new TextInputBuilder()
       .setCustomId('tio-names-input')
@@ -149,7 +182,7 @@ client.on('interactionCreate', async (interaction) => {
     const missing = results.filter((r) => !r.found);
 
     const embed = new EmbedBuilder()
-      .setTitle('🔍 Test IO Lookup')
+      .setTitle('🔍 Test IO Batch Lookup')
       .setColor(missing.length === 0 ? 0x23a55a : 0x5865f2)
       .setDescription(
         `**${found.length} found** · **${missing.length} not found** · ${results.length} checked` +
